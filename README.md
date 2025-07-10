@@ -1,4 +1,4 @@
-# Aptos Golang Protos
+# Aptos Go gRPC client
 
 A community-based gRPC Golang client generator for Aptos blockchain protocol buffers.
 
