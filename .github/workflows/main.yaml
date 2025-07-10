@@ -1,0 +1,338 @@
+name: Generate client
+
+on:
+  push:
+    branches:
+      - dev
+  schedule:
+    - cron: "0 6,12,18 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      force_update:
+        description: "Force update even if no upstream changes"
+        required: false
+        default: false
+        type: boolean
+      aptos_branch:
+        description: "Aptos branch to sync from"
+        required: true
+        default: "main"
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+env:
+  APTOS_REPO: "https://github.com/aptos-labs/aptos-core.git"
+  TARGET_BRANCH: "dev"
+  BASE_BRANCH: "main"
+
+jobs:
+  update-protos:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout our repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+
+      - name: Install tools
+        run: |
+          # Install Buf
+          curl -sSL https://github.com/bufbuild/buf/releases/latest/download/buf-Linux-x86_64 -o /usr/local/bin/buf
+          chmod +x /usr/local/bin/buf
+
+          # Install Go protoc plugins
+          go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+          go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+
+      - name: Get current Aptos commit
+        id: current_state
+        run: |
+          # Check if we have a record of the last synced commit
+          if [ -f ".sync-state" ]; then
+            LAST_COMMIT=$(cat .sync-state)
+            echo "last_commit=$LAST_COMMIT" >> $GITHUB_OUTPUT
+          else
+            echo "last_commit=none" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Clone Aptos repository
+        run: |
+          git clone --depth 1 --branch ${{ inputs.aptos_branch || 'main' }} $APTOS_REPO /tmp/aptos-core
+          cd /tmp/aptos-core
+          CURRENT_COMMIT=$(git rev-parse HEAD)
+          echo "current_commit=$CURRENT_COMMIT" >> $GITHUB_ENV
+          echo "📍 Aptos commit: $CURRENT_COMMIT"
+
+      - name: Check if update needed
+        id: check_update
+        run: |
+          if [ "${{ steps.current_state.outputs.last_commit }}" != "$current_commit" ] || [ "${{ inputs.force_update }}" = "true" ]; then
+            echo "update_needed=true" >> $GITHUB_OUTPUT
+            echo "🔄 Update needed: ${{ steps.current_state.outputs.last_commit }} -> $current_commit"
+          else
+            echo "update_needed=false" >> $GITHUB_OUTPUT
+            echo "✅ Already up to date"
+          fi
+
+      - name: Configure Git
+        if: steps.check_update.outputs.update_needed == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Ensure on dev branch
+        if: steps.check_update.outputs.update_needed == 'true'
+        run: |
+          # Make sure we're on the dev branch
+          git checkout $TARGET_BRANCH || git checkout -b $TARGET_BRANCH
+          git pull origin $TARGET_BRANCH || true
+
+      - name: Copy Aptos protos
+        if: steps.check_update.outputs.update_needed == 'true'
+        run: |
+          # Clean existing proto files
+          rm -rf protos/
+          mkdir -p protos/
+
+          # Copy proto files and buf configuration
+          cp -r /tmp/aptos-core/protos/* protos/
+
+          echo "📁 Copied proto files from Aptos"
+
+      - name: Apply patches
+        if: steps.check_update.outputs.update_needed == 'true'
+        run: |
+          echo "🔧 Applying custom patches..."
+
+          # Apply patches if they exist
+          if [ -d "patches/" ]; then
+            for patch_file in patches/*.patch; do
+              if [ -f "$patch_file" ]; then
+                echo "Applying patch: $patch_file"
+                patch -p1 < "$patch_file" || {
+                  echo "⚠️  Patch $patch_file failed to apply cleanly"
+                  exit 1
+                }
+              fi
+            done
+          fi
+
+      - name: Generate protobuf files
+        if: steps.check_update.outputs.update_needed == 'true'
+        run: |
+          echo "🔨 Generating protobuf files..."
+
+          rm -rf aptos/
+          buf generate --template buf.gen.yaml
+
+      - name: Verify generated code
+        if: steps.check_update.outputs.update_needed == 'true'
+        run: |
+          cd aptos
+          echo "🧪 Verifying generated code compiles..."
+          go build ./... || {
+            echo "❌ Generated code doesn't compile"
+            exit 1
+          }
+          echo "✅ Generated code compiles successfully"
+
+      - name: Update sync state
+        if: steps.check_update.outputs.update_needed == 'true'
+        run: |
+          echo "$current_commit" > .sync-state
+          echo "📝 Updated sync state to: $current_commit"
+
+      - name: Commit and push changes
+        if: steps.check_update.outputs.update_needed == 'true'
+        id: commit_changes
+        run: |
+          git add .
+
+          if git diff --staged --quiet; then
+            echo "changes_made=false" >> $GITHUB_OUTPUT
+            echo "ℹ️  No changes detected"
+          else
+            echo "changes_made=true" >> $GITHUB_OUTPUT
+
+            # Create detailed commit message
+            cat > /tmp/commit_msg << EOF
+          chore: update Aptos protobufs from upstream
+
+          📍 Upstream commit: $current_commit
+          🔗 Source: aptos-labs/aptos-core@$current_commit
+
+          Changes:
+          - Updated proto files from upstream
+          - Applied custom patches
+          - Regenerated Go protobuf bindings
+          - Updated module dependencies
+
+          Generated by: ${{ github.workflow }} #${{ github.run_number }}
+          Trigger: ${{ github.event_name }}
+          EOF
+
+            git commit -F /tmp/commit_msg
+            git push origin $TARGET_BRANCH
+
+            echo "✅ Changes committed and pushed to $TARGET_BRANCH"
+          fi
+
+      - name: Check for differences with main
+        id: check_diff
+        run: |
+          # Fetch the main branch
+          git fetch origin $BASE_BRANCH
+
+          # Check if there are differences between dev and main
+          if git diff --quiet origin/$BASE_BRANCH HEAD; then
+            echo "has_differences=false" >> $GITHUB_OUTPUT
+            echo "ℹ️  No differences found between $TARGET_BRANCH and $BASE_BRANCH"
+          else
+            echo "has_differences=true" >> $GITHUB_OUTPUT
+            echo "🔄 Differences found between $TARGET_BRANCH and $BASE_BRANCH"
+          fi
+
+      - name: Create Pull Request
+        if: steps.check_diff.outputs.has_differences == 'true' && (steps.check_update.outputs.update_needed == 'true' || github.event_name == 'push')
+        id: create_pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Check if PR already exists
+          EXISTING_PR=$(gh pr list --head "$TARGET_BRANCH" --base "$BASE_BRANCH" --json number --jq '.[0].number' 2>/dev/null || echo "")
+
+          if [ -n "$EXISTING_PR" ]; then
+            echo "PR already exists: #$EXISTING_PR"
+            echo "pull-request-number=$EXISTING_PR" >> $GITHUB_OUTPUT
+            echo "pull-request-url=https://github.com/${{ github.repository }}/pull/$EXISTING_PR" >> $GITHUB_OUTPUT
+            echo "pull-request-operation=updated" >> $GITHUB_OUTPUT
+
+            # Update existing PR
+            gh pr edit "$EXISTING_PR" --body "## 🔄 Sync Changes from Dev to Main
+
+          This PR syncs changes from the \`dev\` branch to the \`main\` branch.
+
+          ### 📋 Summary
+          - **Source branch**: \`$TARGET_BRANCH\`
+          - **Target branch**: \`$BASE_BRANCH\`
+          - **Workflow run**: [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+          - **Trigger**: ${{ github.event_name }}
+
+          ### 🔍 Changes
+          This PR includes updates to:
+          - [ ] Proto files from upstream Aptos
+          - [ ] Generated Go protobuf bindings
+          - [ ] Applied custom patches
+          - [ ] Module dependencies
+
+          ### ✅ Pre-merge Checklist
+          - [ ] Review all changes carefully
+          - [ ] Verify no breaking API changes
+          - [ ] Test integration with existing code
+          - [ ] Check for any new dependencies
+          - [ ] Ensure all tests pass
+
+          ### 🔗 Links
+          - [Workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+          - [Compare changes](https://github.com/${{ github.repository }}/compare/$BASE_BRANCH...$TARGET_BRANCH)
+
+          ---
+
+          > 🤖 This PR was automatically generated when differences were detected between dev and main branches.
+          >
+          > **⚠️ Important**: Please review all changes carefully before merging.
+
+          ---
+
+          **Last updated**: $(date -u +"%Y-%m-%d %H:%M:%S UTC")"
+
+          echo "✅ Updated existing PR #$EXISTING_PR"
+          else
+            # Create new PR
+            PR_URL=$(gh pr create \
+              --head "$TARGET_BRANCH" \
+              --base "$BASE_BRANCH" \
+              --title "chore: sync changes from dev to main" \
+              --body "## 🔄 Sync Changes from Dev to Main
+
+          This PR syncs changes from the \`dev\` branch to the \`main\` branch.
+
+          ### 📋 Summary
+          - **Source branch**: \`$TARGET_BRANCH\`
+          - **Target branch**: \`$BASE_BRANCH\`
+          - **Workflow run**: [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+          - **Trigger**: ${{ github.event_name }}
+
+          ### 🔍 Changes
+          This PR includes updates to:
+          - [ ] Proto files from upstream Aptos
+          - [ ] Generated Go protobuf bindings
+          - [ ] Applied custom patches
+          - [ ] Module dependencies
+
+          ### ✅ Pre-merge Checklist
+          - [ ] Review all changes carefully
+          - [ ] Verify no breaking API changes
+          - [ ] Test integration with existing code
+          - [ ] Check for any new dependencies
+          - [ ] Ensure all tests pass
+
+          ### 🔗 Links
+          - [Workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+          - [Compare changes](https://github.com/${{ github.repository }}/compare/$BASE_BRANCH...$TARGET_BRANCH)
+
+          ---
+
+          > 🤖 This PR was automatically generated when differences were detected between dev and main branches.
+          >
+          > **⚠️ Important**: Please review all changes carefully before merging." \
+              --assignee "${{ github.actor }}" \
+              --label "automated")
+
+            PR_NUMBER=$(echo "$PR_URL" | sed 's/.*\/pull\/\([0-9]*\).*/\1/')
+            echo "pull-request-number=$PR_NUMBER" >> $GITHUB_OUTPUT
+            echo "pull-request-url=$PR_URL" >> $GITHUB_OUTPUT
+            echo "pull-request-operation=created" >> $GITHUB_OUTPUT
+
+            echo "✅ Created new PR #$PR_NUMBER: $PR_URL"
+          fi
+
+      - name: Comment on existing PR if updated
+        if: steps.check_diff.outputs.has_differences == 'true' && steps.create_pr.outputs.pull-request-operation == 'updated'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr comment ${{ steps.create_pr.outputs.pull-request-number }} --body "🔄 **Updated with new changes**
+
+          - **Workflow run**: [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+          - **Trigger**: ${{ github.event_name }}
+          - **Updated**: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+
+          Please review the latest changes before merging."
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## 📊 Workflow Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- **Target branch**: $TARGET_BRANCH" >> $GITHUB_STEP_SUMMARY
+          echo "- **Base branch**: $BASE_BRANCH" >> $GITHUB_STEP_SUMMARY
+          echo "- **Aptos commit**: $current_commit" >> $GITHUB_STEP_SUMMARY
+          echo "- **Update needed**: ${{ steps.check_update.outputs.update_needed }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Changes made**: ${{ steps.commit_changes.outputs.changes_made || 'N/A' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Has differences**: ${{ steps.check_diff.outputs.has_differences || 'N/A' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **PR created/updated**: ${{ steps.create_pr.outputs.pull-request-number || 'N/A' }}" >> $GITHUB_STEP_SUMMARY
+
+          if [ "${{ steps.create_pr.outputs.pull-request-number }}" != "" ]; then
+            echo "- **PR URL**: ${{ steps.create_pr.outputs.pull-request-url }}" >> $GITHUB_STEP_SUMMARY
+          fi

@@ -1,0 +1,100 @@
+diff --git a/protos/proto/aptos/indexer/v1/filter.proto b/protos/proto/aptos/indexer/v1/filter.proto
+index 4169e6f..fb5b268 100644
+--- a/protos/proto/aptos/indexer/v1/filter.proto
++++ b/protos/proto/aptos/indexer/v1/filter.proto
+@@ -5,6 +5,8 @@ syntax = "proto3";
+ 
+ package aptos.indexer.v1;
+ 
++option go_package = "aptos/indexer/v1";
++
+ import "aptos/transaction/v1/transaction.proto";
+ 
+ message LogicalAndFilters {
+diff --git a/protos/proto/aptos/indexer/v1/grpc.proto b/protos/proto/aptos/indexer/v1/grpc.proto
+index 7337905..fc48fe9 100644
+--- a/protos/proto/aptos/indexer/v1/grpc.proto
++++ b/protos/proto/aptos/indexer/v1/grpc.proto
+@@ -5,6 +5,8 @@ syntax = "proto3";
+ 
+ package aptos.indexer.v1;
+ 
++option go_package = "aptos/indexer/v1";
++
+ import "aptos/indexer/v1/raw_data.proto";
+ import "aptos/transaction/v1/transaction.proto";
+ import "aptos/util/timestamp/timestamp.proto";
+diff --git a/protos/proto/aptos/indexer/v1/raw_data.proto b/protos/proto/aptos/indexer/v1/raw_data.proto
+index fe7ab26..3d9c254 100644
+--- a/protos/proto/aptos/indexer/v1/raw_data.proto
++++ b/protos/proto/aptos/indexer/v1/raw_data.proto
+@@ -5,6 +5,8 @@ syntax = "proto3";
+ 
+ package aptos.indexer.v1;
+ 
++option go_package = "aptos/indexer/v1";
++
+ import "aptos/indexer/v1/filter.proto";
+ import "aptos/transaction/v1/transaction.proto";
+ 
+diff --git a/protos/proto/aptos/internal/fullnode/v1/fullnode_data.proto b/protos/proto/aptos/internal/fullnode/v1/fullnode_data.proto
+index 27e08c4..6d5a9ba 100644
+--- a/protos/proto/aptos/internal/fullnode/v1/fullnode_data.proto
++++ b/protos/proto/aptos/internal/fullnode/v1/fullnode_data.proto
+@@ -5,6 +5,8 @@ syntax = "proto3";
+ 
+ package aptos.internal.fullnode.v1;
+ 
++option go_package = "aptos/internal/fullnode/v1";
++
+ import "aptos/transaction/v1/transaction.proto";
+ import "aptos/indexer/v1/grpc.proto";
+ 
+diff --git a/protos/proto/aptos/remote_executor/v1/network_msg.proto b/protos/proto/aptos/remote_executor/v1/network_msg.proto
+index c467d99..b0836e3 100644
+--- a/protos/proto/aptos/remote_executor/v1/network_msg.proto
++++ b/protos/proto/aptos/remote_executor/v1/network_msg.proto
+@@ -5,6 +5,8 @@ syntax = "proto3";
+ 
+ package aptos.remote_executor.v1;
+ 
++option go_package = "aptos/remote_executor/v1";
++
+ message NetworkMessage {
+   bytes message = 1;
+   string message_type = 2;
+diff --git a/protos/proto/aptos/transaction/v1/transaction.proto b/protos/proto/aptos/transaction/v1/transaction.proto
+index 1f026df..e7f2c86 100644
+--- a/protos/proto/aptos/transaction/v1/transaction.proto
++++ b/protos/proto/aptos/transaction/v1/transaction.proto
+@@ -5,6 +5,8 @@ syntax = "proto3";
+ 
+ package aptos.transaction.v1;
+ 
++option go_package = "aptos/transaction/v1";
++
+ import "aptos/util/timestamp/timestamp.proto";
+ 
+ // A block on Aptos holds transactions in chronological order (ordered by a transactions monotonically increasing `version` field)
+@@ -293,7 +295,7 @@ message WriteTableItem {
+   WriteTableData data = 4;
+ }
+ 
+-// Question: Not sure if this is the correct way to add extra config in protobuf here. 
++// Question: Not sure if this is the correct way to add extra config in protobuf here.
+ // Not sure about the numbering as well. Please double check.
+ message TransactionPayload {
+   enum Type {
+diff --git a/protos/proto/aptos/util/timestamp/timestamp.proto b/protos/proto/aptos/util/timestamp/timestamp.proto
+index caacaa1..837375f 100644
+--- a/protos/proto/aptos/util/timestamp/timestamp.proto
++++ b/protos/proto/aptos/util/timestamp/timestamp.proto
+@@ -5,6 +5,8 @@ syntax = "proto3";
+ 
+ package aptos.util.timestamp;
+ 
++option go_package = "aptos/util/timestamp";
++
+ message Timestamp {
+   // Represents seconds of UTC time since Unix epoch
+   // 1970-01-01T00:00:00Z. Must be from 0001-01-01T00:00:00Z to
