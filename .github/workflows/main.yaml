@@ -77,7 +77,11 @@ jobs:
       - name: Check if update needed
         id: check_update
         run: |
-          if [ "${{ steps.current_state.outputs.last_commit }}" != "$current_commit" ] || [ "${{ inputs.force_update }}" = "true" ]; then
+          # Check
+          # - if force_update --> Update needed
+          # - if the last_commit is not equal to the current commit and if there are changes in the protos folder of the Aptos repository --> Update needed
+
+          if [ "${{ inputs.force_update }}" = "true" || "${{ steps.current_state.outputs.last_commit }}" != "$current_commit" && git diff --name-only HEAD^ HEAD | grep -q 'protos/'; then
             echo "update_needed=true" >> $GITHUB_OUTPUT
             echo "🔄 Update needed: ${{ steps.current_state.outputs.last_commit }} -> $current_commit"
           else
