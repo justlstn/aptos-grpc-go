@@ -1,5 +1,8 @@
 # Aptos Go gRPC client
 
+[![Generate client](https://github.com/justlstn/aptos-grpc-go/actions/workflows/main.yaml/badge.svg)](https://github.com/justlstn/aptos-grpc-go/actions/workflows/main.yaml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/justlstn/aptos-grpc-go.svg)](https://pkg.go.dev/github.com/justlstn/aptos-grpc-go)
+
 A community-based gRPC Golang client generator for Aptos blockchain protocol buffers.
 
 ## ⚠️ Important Notice
@@ -32,6 +35,141 @@ This project generates Go gRPC client code from the official Aptos Core protocol
 ```bash
 go get github.com/justlstn/aptos-grpc-go
 ```
+
+## Usage
+
+### Available gRPC Services
+
+This package provides the following gRPC client interfaces:
+
+- **RawDataClient** - Stream transactions from the Aptos indexer
+- **GrpcManagerClient** - Manage indexer connections and requests
+- **DataServiceClient** - Access indexer data services
+- **FullnodeDataClient** - Connect to Aptos fullnode for transaction data
+- **NetworkMessageServiceClient** - Handle network messaging
+
+### Basic Example: Streaming Transactions
+
+```go
+package main
+
+import (
+    "context"
+    "crypto/tls"
+    "fmt"
+    "io"
+    "log"
+
+    "google.golang.org/grpc"
+    "google.golang.org/grpc/credentials"
+    indexerv1 "github.com/justlstn/aptos-grpc-go/aptos/indexer/v1"
+)
+
+func main() {
+    // Connect to Aptos indexer gRPC endpoint
+    creds := credentials.NewTLS(&tls.Config{})
+    conn, err := grpc.Dial(
+        "grpc.mainnet.aptoslabs.com:443",
+        grpc.WithTransportCredentials(creds),
+    )
+    if err != nil {
+        log.Fatalf("Failed to connect: %v", err)
+    }
+    defer conn.Close()
+
+    // Create RawData client
+    client := indexerv1.NewRawDataClient(conn)
+
+    // Request transactions starting from version 0
+    req := &indexerv1.GetTransactionsRequest{
+        StartingVersion: 0,
+    }
+
+    // Stream transactions
+    stream, err := client.GetTransactions(context.Background(), req)
+    if err != nil {
+        log.Fatalf("Failed to get transactions: %v", err)
+    }
+
+    // Process streamed transactions
+    for {
+        resp, err := stream.Recv()
+        if err == io.EOF {
+            break
+        }
+        if err != nil {
+            log.Fatalf("Error receiving transaction: %v", err)
+        }
+
+        fmt.Printf("Received %d transactions\n", len(resp.Transactions))
+        for _, tx := range resp.Transactions {
+            fmt.Printf("  Version: %d, Type: %v\n", tx.Version, tx.Type)
+        }
+    }
+}
+```
+
+### Example: Using Fullnode Client
+
+```go
+package main
+
+import (
+    "context"
+    "crypto/tls"
+    "fmt"
+    "log"
+
+    "google.golang.org/grpc"
+    "google.golang.org/grpc/credentials"
+    fullnodev1 "github.com/justlstn/aptos-grpc-go/aptos/internal/fullnode/v1"
+)
+
+func main() {
+    // Connect to Aptos fullnode
+    creds := credentials.NewTLS(&tls.Config{})
+    conn, err := grpc.Dial(
+        "fullnode.mainnet.aptoslabs.com:443",
+        grpc.WithTransportCredentials(creds),
+    )
+    if err != nil {
+        log.Fatalf("Failed to connect: %v", err)
+    }
+    defer conn.Close()
+
+    // Create Fullnode client
+    client := fullnodev1.NewFullnodeDataClient(conn)
+
+    // Ping the fullnode
+    pingResp, err := client.Ping(context.Background(), &fullnodev1.PingFullnodeRequest{})
+    if err != nil {
+        log.Fatalf("Ping failed: %v", err)
+    }
+
+    fmt.Printf("Fullnode ping successful: %+v\n", pingResp)
+}
+```
+
+### Testnet Example
+
+```go
+// For testnet, use:
+conn, err := grpc.Dial(
+    "grpc.testnet.aptoslabs.com:443",
+    grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{})),
+)
+```
+
+## Automatic Updates
+
+This repository is automatically updated when new proto definitions are published by Aptos Labs:
+
+- Runs 3 times daily (6 AM, 12 PM, 6 PM UTC) on weekdays
+- Checks for upstream changes in `aptos-labs/aptos-core`
+- Automatically regenerates Go code when proto files change
+- Creates pull requests for review before merging to main
+
+You can view the latest sync status in the `.sync-state` file or check the [workflow runs](https://github.com/justlstn/aptos-grpc-go/actions).
 
 ## Contributing
 
