@@ -38,6 +38,20 @@ go get github.com/justlstn/aptos-grpc-go
 
 ## Usage
 
+### Authentication
+
+The Aptos Transaction Stream Service requires authentication. To get an API key:
+
+1. Visit [geomi.dev](https://geomi.dev)
+2. Sign in and navigate to "API Resource"
+3. Create a new API key
+
+Set your API key as an environment variable:
+
+```bash
+export APTOS_API_KEY="your-api-key-here"
+```
+
 ### Available gRPC Services
 
 This package provides the following gRPC client interfaces:
@@ -47,6 +61,12 @@ This package provides the following gRPC client interfaces:
 - **DataServiceClient** - Access indexer data services
 - **FullnodeDataClient** - Connect to Aptos fullnode for transaction data
 - **NetworkMessageServiceClient** - Handle network messaging
+
+### Available Endpoints
+
+- **Mainnet**: `grpc.mainnet.aptoslabs.com:443`
+- **Testnet**: `grpc.testnet.aptoslabs.com:443`
+- **Devnet**: `grpc.devnet.aptoslabs.com:443`
 
 ### Basic Example: Streaming Transactions
 
@@ -59,18 +79,44 @@ import (
     "fmt"
     "io"
     "log"
+    "os"
 
     "google.golang.org/grpc"
     "google.golang.org/grpc/credentials"
     indexerv1 "github.com/justlstn/aptos-grpc-go/aptos/indexer/v1"
 )
 
+// authTokenCredential implements credentials.PerRPCCredentials
+type authTokenCredential struct {
+    token string
+}
+
+func (a authTokenCredential) GetRequestMetadata(ctx context.Context, uri ...string) (map[string]string, error) {
+    return map[string]string{
+        "authorization": "Bearer " + a.token,
+    }, nil
+}
+
+func (a authTokenCredential) RequireTransportSecurity() bool {
+    return true
+}
+
 func main() {
+    // Get API key from environment
+    apiKey := os.Getenv("APTOS_API_KEY")
+    if apiKey == "" {
+        log.Fatal("APTOS_API_KEY environment variable not set")
+    }
+
+    // Setup TLS and auth credentials
+    tlsCreds := credentials.NewTLS(&tls.Config{})
+    authCreds := authTokenCredential{token: apiKey}
+
     // Connect to Aptos indexer gRPC endpoint
-    creds := credentials.NewTLS(&tls.Config{})
     conn, err := grpc.Dial(
         "grpc.mainnet.aptoslabs.com:443",
-        grpc.WithTransportCredentials(creds),
+        grpc.WithTransportCredentials(tlsCreds),
+        grpc.WithPerRPCCredentials(authCreds),
     )
     if err != nil {
         log.Fatalf("Failed to connect: %v", err)
@@ -81,8 +127,9 @@ func main() {
     client := indexerv1.NewRawDataClient(conn)
 
     // Request transactions starting from version 0
+    startVersion := uint64(0)
     req := &indexerv1.GetTransactionsRequest{
-        StartingVersion: 0,
+        StartingVersion: &startVersion,
     }
 
     // Stream transactions
@@ -92,6 +139,7 @@ func main() {
     }
 
     // Process streamed transactions
+    count := 0
     for {
         resp, err := stream.Recv()
         if err == io.EOF {
@@ -104,59 +152,32 @@ func main() {
         fmt.Printf("Received %d transactions\n", len(resp.Transactions))
         for _, tx := range resp.Transactions {
             fmt.Printf("  Version: %d, Type: %v\n", tx.Version, tx.Type)
+            count++
+            if count >= 10 {
+                return // Just show first 10 for demo
+            }
         }
     }
 }
 ```
 
-### Example: Using Fullnode Client
+### Using Different Networks
+
+To connect to testnet or devnet, simply change the endpoint:
 
 ```go
-package main
-
-import (
-    "context"
-    "crypto/tls"
-    "fmt"
-    "log"
-
-    "google.golang.org/grpc"
-    "google.golang.org/grpc/credentials"
-    fullnodev1 "github.com/justlstn/aptos-grpc-go/aptos/internal/fullnode/v1"
-)
-
-func main() {
-    // Connect to Aptos fullnode
-    creds := credentials.NewTLS(&tls.Config{})
-    conn, err := grpc.Dial(
-        "fullnode.mainnet.aptoslabs.com:443",
-        grpc.WithTransportCredentials(creds),
-    )
-    if err != nil {
-        log.Fatalf("Failed to connect: %v", err)
-    }
-    defer conn.Close()
-
-    // Create Fullnode client
-    client := fullnodev1.NewFullnodeDataClient(conn)
-
-    // Ping the fullnode
-    pingResp, err := client.Ping(context.Background(), &fullnodev1.PingFullnodeRequest{})
-    if err != nil {
-        log.Fatalf("Ping failed: %v", err)
-    }
-
-    fmt.Printf("Fullnode ping successful: %+v\n", pingResp)
-}
-```
-
-### Testnet Example
-
-```go
-// For testnet, use:
+// For testnet
 conn, err := grpc.Dial(
     "grpc.testnet.aptoslabs.com:443",
-    grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{})),
+    grpc.WithTransportCredentials(tlsCreds),
+    grpc.WithPerRPCCredentials(authCreds),
+)
+
+// For devnet
+conn, err := grpc.Dial(
+    "grpc.devnet.aptoslabs.com:443",
+    grpc.WithTransportCredentials(tlsCreds),
+    grpc.WithPerRPCCredentials(authCreds),
 )
 ```
 
